@@ -1,0 +1,11 @@
+  Employee Name  ,Salary ($),Join Date,Is Active?,Department,Age,Performance Rating
+Alice,"$50,000",2021-01-15,Yes,Sales,25,4.5
+Bob,"60,000",01/20/2021,No,IT,30,3.8
+Charlie,55000,2021-03-10,yes,Sales,200,4.1
+Alice,"$50,000",2021-01-15,Yes,Sales,25,4.5
+David,(20000),"March 5, 2022",TRUE,HR,28,3.9
+Eve,1000000,2022-07-01,False,IT,35,4.7
+,"70,000",2022-08-15,Y,Sales,40,
+Frank,,invalid,N,HR,-5,3.2
+Grace,"45,000",2022-09-01,Yes,Marketing,29,4.0
+Heidi,48000,2022-10-12,no,Marketing,31,3.6
