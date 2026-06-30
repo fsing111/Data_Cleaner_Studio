@@ -16,6 +16,10 @@ node_modules/
 .vscode/
 .idea/
 
+# Secrets & environment
+.env
+.streamlit/secrets.toml
+
 # Data files (sensitive / large generated)
 *.csv
 !sample_messy_data.csv

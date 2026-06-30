@@ -22,6 +22,7 @@ import pandas as pd
 import streamlit as st
 
 from cleaning_engine import clean_dataframe, detect_sensitive_columns
+from llm_advisor import build_data_context, get_api_key, create_client, test_connection, chat_with_data
 
 # ── Matplotlib 中文字体设置 ────────────────────────────────────────────────
 _CJK_FONTS = [
@@ -206,6 +207,18 @@ T = {
         "common.original_type": "原始类型",
         "common.new_type": "新类型",
         "common.detail": "说明",
+
+        # ── AI 助手 ──
+        "ai.header": "🤖 AI 设置",
+        "ai.api_key_label": "DeepSeek API Key",
+        "ai.api_key_help": "在 platform.deepseek.com 获取 API Key。优先使用侧边栏输入，其次读取 Secrets/环境变量。",
+        "ai.test_connection": "🔌 测试连接",
+        "ai.testing": "正在测试连接...",
+        "ai.tab": "🤖 AI 数据助手",
+        "ai.welcome": "👋 你好！我是你的数据助手。你可以用自然语言向我提问关于这份数据集的任何问题，例如：\n\n- 这个数据有哪些质量问题？\n- 薪资列的分布情况如何？\n- 哪个部门的平均绩效最高？\n- 数据中有什么值得关注的模式？\n\n请在下方输入你的问题。",
+        "ai.no_api_key": "⚠️ 请在左侧边栏的 **AI 设置** 中输入你的 DeepSeek API Key 以启用 AI 对话功能。",
+        "ai.input_placeholder": "输入你的问题...",
+        "ai.streaming": "思考中...",
     },
     "en": {
         # ── Page framework ──
@@ -373,6 +386,18 @@ T = {
         "common.original_type": "original_type",
         "common.new_type": "new_type",
         "common.detail": "detail",
+
+        # ── AI Assistant ──
+        "ai.header": "🤖 AI Settings",
+        "ai.api_key_label": "DeepSeek API Key",
+        "ai.api_key_help": "Get your API Key at platform.deepseek.com. Sidebar input takes priority over Secrets/env vars.",
+        "ai.test_connection": "🔌 Test Connection",
+        "ai.testing": "Testing connection...",
+        "ai.tab": "🤖 AI Data Assistant",
+        "ai.welcome": "👋 Hello! I'm your data assistant. Feel free to ask me anything about this dataset in natural language, such as:\n\n- What quality issues does this data have?\n- How is the salary column distributed?\n- Which department has the highest average performance?\n- Any interesting patterns in the data?\n\nType your question below.",
+        "ai.no_api_key": "⚠️ Please enter your DeepSeek API Key in the **AI Settings** section of the sidebar to enable AI chat.",
+        "ai.input_placeholder": "Ask a question about your data...",
+        "ai.streaming": "Thinking...",
     },
 }
 
@@ -561,6 +586,23 @@ with st.sidebar:
         masking_categories["mask_address"] = st.checkbox(t("sidebar.masking.address"), value=False)
 
     st.divider()
+
+    # ── AI Settings ──
+    with st.expander(t("ai.header"), expanded=False):
+        ai_api_key_input = st.text_input(
+            t("ai.api_key_label"),
+            type="password",
+            help=t("ai.api_key_help"),
+            key="sidebar_api_key",
+        )
+        if st.button(t("ai.test_connection"), use_container_width=True, key="test_conn_btn"):
+            with st.spinner(t("ai.testing")):
+                ok, msg = test_connection(ai_api_key_input if ai_api_key_input else "")
+                if ok:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+
     st.caption(t("sidebar.pipeline_order"))
 
 
@@ -850,6 +892,7 @@ else:
 
     # ── Compute quality metrics ──
     quality = compute_quality_score(raw_df, cleaned_df, report)
+    report.update(quality)  # merge quality scores into report for LLM context
 
     # ── Summary metrics ──
     m1, m2, m3, m4, m5 = st.columns(5)
@@ -884,6 +927,7 @@ else:
     if enable_masking:
         tab_names.append(t("tab.masking"))
     tab_names.append(t("tab.column_renames"))
+    tab_names.append(t("ai.tab"))
 
     tabs = st.tabs(tab_names)
     tab_idx = 0
@@ -1050,6 +1094,70 @@ else:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
             else:
                 st.write(t("rename.already_standard"))
+
+    # ── Tab: AI Data Assistant ──────────────────────────────────────────
+    with tabs[tab_idx]:
+        tab_idx += 1
+        st.markdown(f'<div class="section-header">{t("ai.tab")}</div>', unsafe_allow_html=True)
+
+        api_key = get_api_key(ai_api_key_input if "ai_api_key_input" in dir() else "")
+
+        if not api_key:
+            st.info(t("ai.no_api_key"))
+        else:
+            # Initialize chat history
+            if "ai_messages" not in st.session_state:
+                st.session_state.ai_messages = []
+
+            # Display existing chat history
+            for msg in st.session_state.ai_messages:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+
+            # Welcome message if no history yet
+            if not st.session_state.ai_messages:
+                with st.chat_message("assistant"):
+                    st.markdown(t("ai.welcome"))
+
+            # Chat input
+            if prompt := st.chat_input(t("ai.input_placeholder"), key="ai_chat"):
+                # Show and save user message
+                st.session_state.ai_messages.append({"role": "user", "content": prompt})
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+
+                # Build data context and create client
+                data_context = build_data_context(cleaned_df, report)
+                client = create_client(api_key)
+
+                # Stream assistant response
+                with st.chat_message("assistant"):
+                    placeholder = st.empty()
+                    full_response = ""
+                    try:
+                        for chunk in chat_with_data(
+                            client,
+                            st.session_state.ai_messages,
+                            data_context,
+                        ):
+                            full_response += chunk
+                            placeholder.markdown(full_response + "▌")
+                        placeholder.markdown(full_response)
+                    except Exception as e:
+                        placeholder.error(f"调用失败：{e}")
+                        full_response = f"（错误：{e}）"
+
+                st.session_state.ai_messages.append({
+                    "role": "assistant",
+                    "content": full_response,
+                })
+
+            # Clear history button
+            if st.session_state.ai_messages:
+                st.divider()
+                if st.button("🗑️ 清除对话历史" if st.session_state.lang == "zh" else "🗑️ Clear chat history"):
+                    st.session_state.ai_messages = []
+                    st.rerun()
 
     st.divider()
 
